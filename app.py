@@ -8,11 +8,16 @@ import gradio as gr
 import numpy as np
 import soundfile as sf
 import torch
+import os
+from datetime import datetime
+import re # For filename sanitization
 
 from dia.model import Dia
 
 
 # --- Global Setup ---
+OUTPUT_FOLDER = "Outputs"
+
 parser = argparse.ArgumentParser(description="Gradio interface for Nari TTS")
 parser.add_argument("--device", type=str, default=None, help="Force device (e.g., 'cuda', 'mps', 'cpu')")
 parser.add_argument("--share", action="store_true", help="Enable Gradio sharing")
@@ -63,7 +68,6 @@ def run_inference(
     if not text_input or text_input.isspace():
         raise gr.Error("Text input cannot be empty.")
 
-    temp_txt_file_path = None
     temp_audio_prompt_path = None
     output_audio = (44100, np.zeros(1, dtype=np.float32))
 
@@ -167,6 +171,55 @@ def run_inference(
 
             print(f"Audio conversion successful. Final shape: {output_audio[1].shape}, Sample Rate: {output_sr}")
 
+            # --- Save generated audio ---
+            try:
+                if not os.path.exists(OUTPUT_FOLDER):
+                    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+                now = datetime.now()
+                timestamp = now.strftime("%m%d%Y_%H%M%S")
+
+                # Determine relevant text for filename
+                lines = text_input.strip().splitlines()
+                text_for_filename = ""
+                if len(lines) > 1:  # Two or more lines
+                    text_for_filename = " ".join(lines[1:])  # Start from the second line
+                elif lines:  # Single line
+                    text_for_filename = lines[0]
+
+                # Sanitize and select words
+                # Remove speaker tags like [S1], [S2] and other bracketed content first
+                processed_text = re.sub(r'\[.*?\]', '', text_for_filename).strip()
+                
+                # Extract words, convert to lowercase
+                words_from_text = re.findall(r'\b\w+\b', processed_text.lower())
+                
+                ignored_filename_words = {'s1', 's2'}
+                filtered_filename_words = [word for word in words_from_text if word not in ignored_filename_words]
+
+                # Sanitize: keep only alphanumeric
+                sanitized_word_parts = [re.sub(r'[^a-zA-Z0-9]', '', word) for word in filtered_filename_words]
+                # Filter out empty strings that might result from sanitizing punctuation-only "words"
+                final_words_for_filename = [word for word in sanitized_word_parts if word][:3]
+
+                if final_words_for_filename:
+                    filename_base = "_".join(final_words_for_filename)
+                else:
+                    # Fallback if no suitable words are found
+                    filename_base = "audio" 
+                
+                filename = f"{filename_base}_{timestamp}_dia.wav"
+                output_path = os.path.join(OUTPUT_FOLDER, filename)
+
+                # Save the audio file (output_audio[1] is float32 here, output_audio[0] is sr)
+                sf.write(output_path, output_audio[1], output_audio[0], subtype='FLOAT')
+                print(f"Successfully saved audio to {output_path}")
+
+            except Exception as save_e:
+                print(f"Error saving audio file: {save_e}")
+                gr.Warning(f"Failed to save audio: {save_e}") # Inform user via Gradio UI
+            # --- End of audio saving ---
+
             # Explicitly convert to int16 to prevent Gradio warning
             if output_audio[1].dtype == np.float32 or output_audio[1].dtype == np.float64:
                 audio_for_gradio = np.clip(output_audio[1], -1.0, 1.0)
@@ -189,12 +242,6 @@ def run_inference(
 
     finally:
         # 5. Cleanup Temporary Files defensively
-        if temp_txt_file_path and Path(temp_txt_file_path).exists():
-            try:
-                Path(temp_txt_file_path).unlink()
-                print(f"Deleted temporary text file: {temp_txt_file_path}")
-            except OSError as e:
-                print(f"Warning: Error deleting temporary text file {temp_txt_file_path}: {e}")
         if temp_audio_prompt_path and Path(temp_audio_prompt_path).exists():
             try:
                 Path(temp_audio_prompt_path).unlink()
