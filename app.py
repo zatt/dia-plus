@@ -43,7 +43,7 @@ print(f"Using device: {device}")
 print("Loading Nari model...")
 try:
     # Use the function from inference.py
-    model = Dia.from_pretrained("nari-labs/Dia-1.6B", compute_dtype="float16", device=device)
+    model = Dia.from_local(config_path="models/config.json", checkpoint_path="models/dia.safetensors", compute_dtype="float16", device=device)
 except Exception as e:
     print(f"Error loading Nari model: {e}")
     raise
