@@ -4,6 +4,7 @@ from enum import Enum
 import numpy as np
 import torch
 import torchaudio
+from safetensors.torch import load_file # Added for .safetensors support
 
 # Assuming these imports are relative to the package structure
 from .audio import apply_audio_delay, build_delay_indices, build_revert_indices, revert_audio_delay
@@ -155,7 +156,13 @@ class Dia:
         dia = cls(config, compute_dtype, device, load_dac)
 
         try:
-            state_dict = torch.load(checkpoint_path, map_location=dia.device)
+            if checkpoint_path.endswith(".safetensors"):
+                # Load safetensors to CPU first, then the model will be moved to dia.device later
+                state_dict = load_file(checkpoint_path, device="cpu")
+            elif checkpoint_path.endswith(".pth"):
+                state_dict = torch.load(checkpoint_path, map_location=dia.device)
+            else:
+                raise ValueError(f"Unsupported checkpoint file extension: {checkpoint_path}. Must be .pth or .safetensors")
             dia.model.load_state_dict(state_dict)
         except FileNotFoundError:
             raise FileNotFoundError(f"Checkpoint file not found at {checkpoint_path}")
